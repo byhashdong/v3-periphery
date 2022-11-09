@@ -64,10 +64,9 @@ contract SwapRouter is
         (address tokenIn, address tokenOut, uint24 fee) = data.path.decodeFirstPool();
         CallbackValidation.verifyCallback(factory, tokenIn, tokenOut, fee);
 
-        (bool isExactInput, uint256 amountToPay) =
-            amount0Delta > 0
-                ? (tokenIn < tokenOut, uint256(amount0Delta))
-                : (tokenOut < tokenIn, uint256(amount1Delta));
+        (bool isExactInput, uint256 amountToPay) = amount0Delta > 0
+            ? (tokenIn < tokenOut, uint256(amount0Delta))
+            : (tokenOut < tokenIn, uint256(amount1Delta));
         if (isExactInput) {
             pay(tokenIn, data.payer, msg.sender, amountToPay);
         } else {
@@ -93,20 +92,23 @@ contract SwapRouter is
         // allow swapping to the router address with address 0
         if (recipient == address(0)) recipient = address(this);
 
+        // 将 path 解码，获取头部的 tokenIn, tokenOut, fee
         (address tokenIn, address tokenOut, uint24 fee) = data.path.decodeFirstPool();
 
+        // 因为交易池只保存了 token x 的价格，这里我们需要知道输入的 token 是交易池 x token 还是 y token
         bool zeroForOne = tokenIn < tokenOut;
 
-        (int256 amount0, int256 amount1) =
-            getPool(tokenIn, tokenOut, fee).swap(
-                recipient,
-                zeroForOne,
-                amountIn.toInt256(),
-                sqrtPriceLimitX96 == 0
-                    ? (zeroForOne ? TickMath.MIN_SQRT_RATIO + 1 : TickMath.MAX_SQRT_RATIO - 1)
-                    : sqrtPriceLimitX96,
-                abi.encode(data)
-            );
+        // 完成交易
+        (int256 amount0, int256 amount1) = getPool(tokenIn, tokenOut, fee).swap(
+            recipient,
+            zeroForOne,
+            amountIn.toInt256(),
+            sqrtPriceLimitX96 == 0
+                ? (zeroForOne ? TickMath.MIN_SQRT_RATIO + 1 : TickMath.MAX_SQRT_RATIO - 1)
+                : sqrtPriceLimitX96,
+            // 给回调函数用的参数
+            abi.encode(data)
+        );
 
         return uint256(-(zeroForOne ? amount1 : amount0));
     }
@@ -138,23 +140,29 @@ contract SwapRouter is
     {
         address payer = msg.sender; // msg.sender pays for the first hop
 
+        // 通过循环，遍历传入的路径，进行交易
         while (true) {
             bool hasMultiplePools = params.path.hasMultiplePools();
 
+            // 完成当前路径的交易
             // the outputs of prior swaps become the inputs to subsequent ones
             params.amountIn = exactInputInternal(
                 params.amountIn,
+                // 如果是中间交易，由合约代为收取和支付中间代币
                 hasMultiplePools ? address(this) : params.recipient, // for intermediate swaps, this contract custodies
                 0,
+                // 给回调函数用的参数
                 SwapCallbackData({
                     path: params.path.getFirstPool(), // only the first pool in the path is necessary
                     payer: payer
                 })
             );
 
+            // 如果路径全部遍历完成，则退出循环，交易完成
             // decide whether to continue or terminate
             if (hasMultiplePools) {
                 payer = address(this); // at this point, the caller has paid
+                // 步进 path 中的值
                 params.path = params.path.skipToken();
             } else {
                 amountOut = params.amountIn;
@@ -162,6 +170,7 @@ contract SwapRouter is
             }
         }
 
+        // 检查交易是否满足预期
         require(amountOut >= params.amountOutMinimum, 'Too little received');
     }
 
@@ -179,16 +188,15 @@ contract SwapRouter is
 
         bool zeroForOne = tokenIn < tokenOut;
 
-        (int256 amount0Delta, int256 amount1Delta) =
-            getPool(tokenIn, tokenOut, fee).swap(
-                recipient,
-                zeroForOne,
-                -amountOut.toInt256(),
-                sqrtPriceLimitX96 == 0
-                    ? (zeroForOne ? TickMath.MIN_SQRT_RATIO + 1 : TickMath.MAX_SQRT_RATIO - 1)
-                    : sqrtPriceLimitX96,
-                abi.encode(data)
-            );
+        (int256 amount0Delta, int256 amount1Delta) = getPool(tokenIn, tokenOut, fee).swap(
+            recipient,
+            zeroForOne,
+            -amountOut.toInt256(),
+            sqrtPriceLimitX96 == 0
+                ? (zeroForOne ? TickMath.MIN_SQRT_RATIO + 1 : TickMath.MAX_SQRT_RATIO - 1)
+                : sqrtPriceLimitX96,
+            abi.encode(data)
+        );
 
         uint256 amountOutReceived;
         (amountIn, amountOutReceived) = zeroForOne
